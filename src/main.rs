@@ -1,3 +1,4 @@
+use config::Config;
 use go_band::{GoBand, Play};
 
 use iced::mouse::Button;
@@ -10,23 +11,49 @@ use iced::{
 mod go_band;
 mod go_move;
 mod game_tree;
+mod config;
 
-const DIM: usize = 19;
-pub const WINDOW_WIDTH: u32 = 1024;
-pub const WINDOW_HEIGHT: u32 = 768;
-pub const WIDTH_SCALE: f32 = 3.0 / 4.0;
-pub const GO_KM: f32 = 7.5;
-pub const GO_SZ: i32 = 19;
+static mut WINDOW_WIDTH: u32 = config::WINDOW_WIDTH;
+static mut WINDOW_HEIGHT: u32 = config::WINDOW_HEIGHT;
+static mut SCALE_FACTOR: f32 = config::SCALE_FACTOR;
+static mut DIM: usize = config::GO_SZ as usize;
+
+macro_rules! GoBand {
+    ($go_sz: expr, $win_width: expr, $win_height: expr) => {
+        GoBandView::<$go_sz>::run(Settings {
+            antialiasing: true,
+            window: window::Settings {
+                size: ($win_width, $win_height),
+                ..window::Settings::default()
+            },
+            ..Settings::default()
+        })
+    };
+}
 
 fn main() -> iced::Result {
-    GoBandView::<DIM>::run(Settings {
-        antialiasing: true,
-        window: window::Settings {
-            size: (WINDOW_WIDTH, WINDOW_HEIGHT),
-            ..window::Settings::default()
-        },
-        ..Settings::default()
-    })
+    let args: Vec<String> = std::env::args().collect();
+    let config = if args.len() == 0 {
+        Config::default()
+    } else {
+        Config::from(args)
+    };
+
+    println!("conf={:?}", config);
+
+    unsafe {
+        WINDOW_WIDTH = config.window_width();
+        WINDOW_HEIGHT = config.window_height();
+        SCALE_FACTOR = config.scale_factor();
+        DIM = config.go_sz() as usize;
+    }
+
+    match config.go_sz() {
+        9 => GoBand!(9, config.window_width(), config.window_height()),
+        13 => GoBand!(13, config.window_width(), config.window_height()),
+        19 => GoBand!(19, config.window_width(), config.window_height()),
+        _ => Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +64,7 @@ enum Message {
 struct GoBandView<const D: usize> {
     window_width: u32,
     window_height: u32,
+    scale_factor: f32,
     go_band: GoBand<D>,
 }
 
@@ -53,21 +81,24 @@ impl<const D: usize> Application for GoBandView<D> {
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, Command<Message>) {
-        let go_band_width = (WINDOW_WIDTH as f32 * WIDTH_SCALE) as u32;
-        (
-            GoBandView {
-                window_width: WINDOW_WIDTH,
-                window_height: WINDOW_HEIGHT,
-                go_band: GoBand::new(
-                    go_band_width,
-                    WINDOW_HEIGHT,
-                    0,
-                    0,
-                    DIM,
-                ),
-            },
-            Command::none(),
-        )
+        unsafe {
+            let go_band_width = (WINDOW_WIDTH as f32 * SCALE_FACTOR) as u32;
+            (
+                GoBandView {
+                    window_width: WINDOW_WIDTH,
+                    window_height: WINDOW_HEIGHT,
+                    scale_factor: SCALE_FACTOR,
+                    go_band: GoBand::new(
+                        go_band_width,
+                        WINDOW_HEIGHT,
+                        0,
+                        0,
+                        DIM,
+                    ),
+                },
+                Command::none(),
+            )
+        }
     }
 
     fn style(&self) -> theme::Application {
@@ -112,7 +143,7 @@ impl<const D: usize> Application for GoBandView<D> {
                         };
                     } else {
                         if let Event::Window(window::Event::Resized { width, height }) = event {
-                            self.go_band.set_window_width((width as f32 * WIDTH_SCALE) as u32);
+                            self.go_band.set_window_width((width as f32 * self.scale_factor) as u32);
                             self.go_band.set_window_height(height);
                             self.window_width = width;
                             self.window_height = height;
