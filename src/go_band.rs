@@ -1,6 +1,8 @@
-use std::collections::{LinkedList, HashSet};
+use std::{collections::{LinkedList, HashSet}, vec};
 
 use iced::{widget::canvas::{self, Stroke, stroke, LineCap, Path, Cache}, Renderer, Theme, Point, Size, Color};
+
+use crate::go_move::GoMove;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Player {
@@ -19,6 +21,7 @@ pub struct GoBand<const D: usize> {
     mouse_preview: (i32, i32),
     cur_player: Player,
     band_cache: Cache,
+    go_moves: Vec<GoMove>,
 }
 
 impl<const D: usize> GoBand<D> {
@@ -40,6 +43,7 @@ impl<const D: usize> GoBand<D> {
             stone_pos: (D as i32 / 2, D as i32 / 2),
             cur_player: Player::BLACK,
             band_cache: Cache::default(),
+            go_moves: vec![],
         }
     }
 
@@ -224,6 +228,168 @@ impl<const D: usize> GoBand<D> {
     }
 }
 
+pub trait Play {
+    fn forward(&mut self);
+    fn back(&mut self);
+}
+
+impl<const D: usize> Play for GoBand<D> {
+    fn forward(&mut self) {
+        let stone_pos = self.stone_pos();
+        let mouse_preview = self.mouse_preview();
+        let cur_x = stone_pos.0 as usize;
+        let cur_y = stone_pos.1 as usize;
+
+        if stone_pos == mouse_preview
+            && self.stone_state(cur_x, cur_y) == 0 {
+            let mut can_record = true;
+            let mut eaten_stones_vec: Vec<(usize, usize, i8)> = vec![];
+            let cur_player = self.current_player();
+            let cur_state = match cur_player {
+                Player::BLACK => {
+                    self.set_stone_state(cur_x, cur_y, 1);
+                    self.set_current_player(Player::WHITE);
+                    1
+                },
+                Player::WHITE => {
+                    self.set_stone_state(cur_x, cur_y, -1);
+                    self.set_current_player(Player::BLACK);
+                    -1
+                },
+            };
+            match self.can_eat_stones(cur_state) {
+                Some(mut eaten_stones_list) => {
+                    if eaten_stones_list.len() == 0 {
+                        // nothing to do
+                    }
+                    else if eaten_stones_list.len() == 1 {
+                        let eaten_stones = eaten_stones_list.pop_front().unwrap();
+                        if eaten_stones.1 == cur_state {
+                            can_record = false;
+                            match cur_state {
+                                1 => {
+                                    self.set_stone_state(cur_x, cur_y, 0);
+                                    self.set_current_player(Player::BLACK);
+                                },
+                                -1 => {
+                                    self.set_stone_state(cur_x, cur_y, 0);
+                                    self.set_current_player(Player::WHITE);
+                                },
+                                _ => {}
+                            }
+                        } else {
+                            for (i, j) in eaten_stones.0 {
+                                self.set_stone_state(i, j, 0);
+                                eaten_stones_vec.push((i, j, eaten_stones.1));
+                            }
+                        }
+                    } else {
+                        for eaten_stones in eaten_stones_list {
+                            // println!("eaten stones={:?}, cur_pos=({}, {})", eaten_stones, cur_x, cur_y);
+                            let mut can_eat = true;
+                            let eaten_state = eaten_stones.1;
+                            if eaten_state == cur_state {
+                                // println!("check for robbery issue");
+                                let go_record_len = self.go_moves.len();
+                                match self.go_moves.get(go_record_len - 1) {
+                                    Some(go_move) => {
+                                        // println!("checked move: {:?}, cur move: ({}, {})", go_move, cur_x, cur_y);
+                                        let record_eaten_stones = go_move.eaten_stones();
+                                        if record_eaten_stones.len() == 1 && record_eaten_stones.len() == 1 {
+                                            let record_eaten_stone = record_eaten_stones.get(0);
+                                            if let Some((i, j, state)) = record_eaten_stone {
+                                                if eaten_stones.0.contains(&(*i, *j)) && eaten_stones.1 == *state {
+                                                    // println!("meet robbery issue");
+                                                    can_record = false;
+                                                    let (record_move_x, record_move_y, record_move_state) = go_move.move_pos();
+                                                    self.set_stone_state(record_move_x, record_move_y, record_move_state);
+                                                    match cur_state {
+                                                        1 => {
+                                                            self.set_stone_state(cur_x, cur_y, 0);
+                                                            self.set_current_player(Player::BLACK);
+                                                        },
+                                                        -1 => {
+                                                            self.set_stone_state(cur_x, cur_y, 0);
+                                                            self.set_current_player(Player::WHITE);
+                                                        },
+                                                        _ => {}
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    None => {},
+                                }
+                            } else {
+                                for (i, j) in eaten_stones.0.clone() {
+                                    // println!("({}, {}), cur_pos=({}, {})", i, j, cur_x, cur_y);
+                                    if i == cur_x && j == cur_y {
+                                        can_eat = false;
+                                        can_record = false;
+                                        let cur_player = self.current_player();
+                                        match cur_player {
+                                            Player::BLACK => {
+                                                self.set_stone_state(cur_x, cur_y, 0);
+                                                self.set_current_player(Player::WHITE);
+                                            },
+                                            Player::WHITE => {
+                                                self.set_stone_state(cur_x, cur_y, 0);
+                                                self.set_current_player(Player::BLACK);
+                                            },
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            if can_eat {
+                                for (i, j) in eaten_stones.0 {
+                                    if cur_state == eaten_state {
+                                        continue;
+                                    }
+                                    self.set_stone_state(i, j, 0);
+                                    eaten_stones_vec.push((i, j, eaten_state));
+                                }
+                            }
+                        }
+                    }
+                },
+                None => {},
+            }
+            if can_record {
+                let record_len = self.go_moves.len();
+                let move_id = record_len;
+                let mut go_move = GoMove::new(move_id, cur_x, cur_y, cur_state);
+                go_move.set_eaten_stones(eaten_stones_vec);
+                self.go_moves.push(go_move);
+                println!("{}: {:?}", move_id, self.go_moves.last());
+            }
+            self.clear();
+        }
+    }
+
+    fn back(&mut self) {
+        match self.go_moves.pop() {
+            Some(go_move) => {
+                println!("recored move: {:?}", go_move.move_id());
+                let (pos_x, pos_y, record_state) = go_move.move_pos();
+                self.set_stone_state(pos_x, pos_y, 0);
+                match record_state {
+                    1 => self.set_current_player(Player::BLACK),
+                    -1 => self.set_current_player(Player::WHITE),
+                    _ => {},
+                }
+                let eaten_stones = go_move.eaten_stones();
+                for (i, j, state) in eaten_stones {
+                    self.set_stone_state(i, j, state);
+                }
+                self.clear();
+            },
+            None => {},
+        };
+    }
+}
+
 impl<Message, const D: usize> canvas::Program<Message, Renderer> for GoBand<D> {
     type State = ();
 
@@ -306,6 +472,16 @@ impl<Message, const D: usize> canvas::Program<Message, Renderer> for GoBand<D> {
                         let cur_pos = Path::circle(Point::new(top_left.x + x as f32 * grid_size, top_left.y + y as f32 * grid_size), grid_size / 2.0);
                         let color = if band_state == 1 { Color::BLACK } else { Color::WHITE };
                         frame.fill(&cur_pos, color);
+
+                        if self.go_moves.len() > 0 {
+                            let last_move = self.go_moves.last().unwrap();
+                            let (last_x, last_y, last_state) = last_move.move_pos();
+                            if (x, y) == (last_x, last_y) {
+                                let indicator_color = if last_state == -1 { Color::BLACK } else { Color::WHITE };
+                                let indicator_pos = Path::circle(Point::new(top_left.x + x as f32 * grid_size, top_left.y + y as f32 * grid_size), grid_size / 4.0);
+                                frame.fill(&indicator_pos, indicator_color);
+                            }
+                        }
                     }
                 }
             }
