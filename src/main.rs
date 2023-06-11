@@ -1,4 +1,5 @@
 use config::Config;
+use game_tree::{GameTree, SgfReader, ReadFile};
 use go_band::{GoBand, Play};
 
 use iced::mouse::Button;
@@ -8,26 +9,21 @@ use iced::{
     Application, Color, Command, Element, Length, Theme,
 };
 
+use crate::game_tree::Parse;
+
 mod go_band;
 mod go_move;
 mod game_tree;
 mod config;
 
-static mut WINDOW_WIDTH: u32 = config::WINDOW_WIDTH;
-static mut WINDOW_HEIGHT: u32 = config::WINDOW_HEIGHT;
-static mut SCALE_FACTOR: f32 = config::SCALE_FACTOR;
-static mut DIM: usize = config::GO_SZ as usize;
-
 macro_rules! GoBand {
-    ($go_sz: expr, $win_width: expr, $win_height: expr) => {
-        GoBandView::<$go_sz>::run(Settings {
-            antialiasing: true,
-            window: window::Settings {
-                size: ($win_width, $win_height),
-                ..window::Settings::default()
-            },
-            ..Settings::default()
-        })
+    ($go_sz: expr, $settings: expr) => {
+        match $go_sz {
+            9 => GoBandView::<9>::run($settings),
+            13 => GoBandView::<13>::run($settings),
+            19 => GoBandView::<19>::run($settings),
+            _ => Ok(())
+        }
     };
 }
 
@@ -38,22 +34,14 @@ fn main() -> iced::Result {
     } else {
         Config::from(args)
     };
+    println!("config={:?}", config);
+    let go_sz = config.go_sz();
 
-    println!("conf={:?}", config);
-
-    unsafe {
-        WINDOW_WIDTH = config.window_width();
-        WINDOW_HEIGHT = config.window_height();
-        SCALE_FACTOR = config.scale_factor();
-        DIM = config.go_sz() as usize;
-    }
-
-    match config.go_sz() {
-        9 => GoBand!(9, config.window_width(), config.window_height()),
-        13 => GoBand!(13, config.window_width(), config.window_height()),
-        19 => GoBand!(19, config.window_width(), config.window_height()),
-        _ => Ok(())
-    }
+    let window_width = config.window_width();
+    let window_height = config.window_height();
+    let mut settings = Settings::with_flags(config);
+    settings.window.size = (window_width, window_height);
+    GoBand!(go_sz, settings)
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +54,7 @@ struct GoBandView<const D: usize> {
     window_height: u32,
     scale_factor: f32,
     go_band: GoBand<D>,
+    _game_tree: GameTree,
 }
 
 impl<const D: usize> GoBandView<D> {
@@ -78,27 +67,42 @@ impl<const D: usize> Application for GoBandView<D> {
     type Executor = executor::Default;
     type Message = Message;
     type Theme = Theme;
-    type Flags = ();
+    type Flags = Config;
 
-    fn new(_flags: ()) -> (Self, Command<Message>) {
-        unsafe {
-            let go_band_width = (WINDOW_WIDTH as f32 * SCALE_FACTOR) as u32;
-            (
-                GoBandView {
-                    window_width: WINDOW_WIDTH,
-                    window_height: WINDOW_HEIGHT,
-                    scale_factor: SCALE_FACTOR,
-                    go_band: GoBand::new(
-                        go_band_width,
-                        WINDOW_HEIGHT,
-                        0,
-                        0,
-                        DIM,
-                    ),
-                },
-                Command::none(),
-            )
-        }
+    fn new(config: Config) -> (Self, Command<Message>) {
+        let window_width = config.window_width();
+        let window_height = config.window_height();
+        let scale_factor = config.scale_factor();
+        let go_band_width = (window_width as f32 * scale_factor) as u32;
+        let go_sz = config.go_sz();
+        let sgf_path = config.sgf_path();
+
+        let _game_tree = if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
+            let sgf_tokens = sgf_reader.parse();
+            let game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len() - 1, true, true);
+            match game_tree {
+                Some(game_tree) => game_tree,
+                None => GameTree::from(config)
+            }
+        } else {
+            GameTree::from(config)
+        };
+        (
+            GoBandView {
+                window_width,
+                window_height,
+                scale_factor,
+                go_band: GoBand::new(
+                    go_band_width,
+                    window_height,
+                    0,
+                    0,
+                    go_sz as usize,
+                ),
+                _game_tree,
+            },
+            Command::none(),
+        )
     }
 
     fn style(&self) -> theme::Application {

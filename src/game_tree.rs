@@ -1,8 +1,9 @@
 use std::{vec, fs::{File, OpenOptions}, io::{BufReader, Read, Write}, rc::Rc, cell::RefCell, collections::LinkedList, borrow::BorrowMut, cmp::Ordering};
 
+use chrono::{DateTime, Utc};
 use json::JsonValue;
 
-use crate::go_move::GoMove;
+use crate::{go_move::GoMove, config::{self, Config}};
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Clone)]
 pub enum SgfToken {
@@ -214,13 +215,24 @@ impl Ord for GameTree {
     }
 }
 
+impl From<Config> for GameTree {
+    fn from(config: Config) -> Self {
+        GameTree::create(
+            config.go_km(),
+            config.go_sz(),
+            config.go_pb(),
+            config.go_pw()
+        )
+    }
+}
+
 impl GameTree {
     pub fn create(
         km: f32,
         sz: i32,
-        dt: String,
         pb: String,
         pw: String) -> Self {
+        let utc: DateTime<Utc> = Utc::now();
         let game_tree = GameTree {
             is_root: true,
             selected: true,
@@ -240,7 +252,7 @@ impl GameTree {
         nodes_ref.push(km_node);
         let sz_node = SgfNode::new(SgfKey::SZ, sz.to_string());
         nodes_ref.push(sz_node);
-        let dt_node = SgfNode::new(SgfKey::DT, dt);
+        let dt_node = SgfNode::new(SgfKey::DT, format!("{}", utc.format("%Y-%m-%d %H:%M:%S")));
         nodes_ref.push(dt_node);
         let pb_node = SgfNode::new(SgfKey::PB, pb);
         nodes_ref.push(pb_node);
@@ -410,7 +422,7 @@ impl GameTree {
         None
     }
 
-    fn to_json(&self) -> Option<JsonValue> {
+    fn _to_json(&self) -> Option<JsonValue> {
         let mut root = json::JsonValue::new_object();
         let mut nodes = json::JsonValue::new_array();
         let mut sub_game_trees_json = json::JsonValue::new_array();
@@ -428,7 +440,7 @@ impl GameTree {
             Some(mut sub_game_trees_ref) => {
                 let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
                 for sub_game_tree in sub_game_trees.clone() {
-                    let sub_game_tree_json = sub_game_tree.to_json().expect("parse sub tree failed");
+                    let sub_game_tree_json = sub_game_tree._to_json().expect("parse sub tree failed");
                     sub_game_trees_json.push(sub_game_tree_json).expect("push sub tree failed!");
                 }
                 sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
@@ -439,7 +451,7 @@ impl GameTree {
         Some(root)
     }
 
-    fn to_string(&self) -> Option<String> {
+    fn _to_string(&self) -> Option<String> {
         let mut sgf_str = if self.is_root { String::from("(;") } else { String::from("(") };
         let nodes = self.nodes.as_ref().unwrap().borrow_mut().take();
         for node in nodes.clone() {
@@ -447,14 +459,14 @@ impl GameTree {
                 || node.node_key == SgfKey::W {
                 sgf_str += &";".to_string().clone();
             }
-            sgf_str += &SgfNode::to_string(node).clone();
+            sgf_str += &SgfNode::_to_string(node).clone();
         }
         self.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
         match self.sub_game_trees.as_ref() {
             Some(mut sub_game_trees_ref) => {
                 let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
                 for sub_game_tree in sub_game_trees.clone() {
-                    let sub_game_tree_str = sub_game_tree.to_string().unwrap();
+                    let sub_game_tree_str = sub_game_tree._to_string().unwrap();
                     sgf_str += &sub_game_tree_str.clone();
                 }
                 sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
@@ -465,8 +477,8 @@ impl GameTree {
         Some(sgf_str)
     }
 
-    fn save_sgf(&self, filename: &str) -> std::io::Result<()> {
-        let sgf_str = self.to_string();
+    fn _save_sgf(&self, filename: &str) -> std::io::Result<()> {
+        let sgf_str = self._to_string();
         match sgf_str {
             Some(str) => {
                 let mut file = match OpenOptions::new()  
@@ -553,7 +565,7 @@ impl SgfNode {
 }
 
 impl SgfNode {
-    fn to_string(sgf_node: SgfNode) -> String {
+    fn _to_string(sgf_node: SgfNode) -> String {
         let mut node_str = String::new();
         let key_str = match sgf_node.node_key {
             SgfToken::CA => "CA",
@@ -618,7 +630,7 @@ mod test {
             let sgf_tokens = sgf_reader.parse();
             let game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len() - 1, true, true);
             let json = match game_tree {
-                Some(game_tree) => Some(game_tree.to_json()),
+                Some(game_tree) => Some(game_tree._to_json()),
                 None => None,
             };
             println!("json={}", json::stringify(json));
@@ -630,10 +642,9 @@ mod test {
         let game_tree = GameTree::create(
             7.5,
             19,
-            "2023-06-03 17:21:30".to_string(),
             "a".to_string(),
             "b".to_string());
-        println!("{:?}", json::stringify(game_tree.to_json().unwrap()));
+        println!("{:?}", json::stringify(game_tree._to_json().unwrap()));
     }
 
     #[test]
@@ -642,10 +653,10 @@ mod test {
         if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
             let sgf_tokens = sgf_reader.parse();
             let mut game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len(), true, true).unwrap();
-            println!("before={}", json::stringify(game_tree.to_json()));
+            println!("before={}", json::stringify(game_tree._to_json()));
             GameTree::record_move(&mut game_tree, 5, GoMove::new(9, 3, 10, -1));
-            println!("after={}", json::stringify(game_tree.to_json()));
-            let _ = game_tree.save_sgf("sgf/test2.sgf");
+            println!("after={}", json::stringify(game_tree._to_json()));
+            let _ = game_tree._save_sgf("sgf/test2.sgf");
         }
     }
 
@@ -655,7 +666,7 @@ mod test {
         if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
             let sgf_tokens = sgf_reader.parse();
             let game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len() - 1, true, true).unwrap();
-            println!("{}", game_tree.to_string().unwrap());   
+            println!("{}", game_tree._to_string().unwrap());   
         }
     }
 }
