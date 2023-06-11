@@ -1,6 +1,6 @@
 use std::{collections::{LinkedList, HashSet}, vec};
 
-use iced::{widget::canvas::{self, Stroke, stroke, LineCap, Path, Cache}, Renderer, Theme, Point, Size, Color};
+use iced::{widget::canvas::{self, Stroke, stroke, LineCap, Path, Cache}, Renderer, Theme, Point, Size, Color, mouse::Cursor};
 
 use crate::go_move::GoMove;
 
@@ -399,7 +399,7 @@ impl<Message, const D: usize> canvas::Program<Message, Renderer> for GoBand<D> {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: iced::Rectangle,
-        _cursor: canvas::Cursor,
+        _cursor: Cursor,
     ) -> Vec<canvas::Geometry> {
         let go_band = self.band_cache.draw(renderer, bounds.size(), |frame| {
             let center = frame.center();
