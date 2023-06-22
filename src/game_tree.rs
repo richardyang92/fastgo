@@ -3,7 +3,7 @@ use std::{vec, fs::{File, OpenOptions}, io::{BufReader, Read, Write}, rc::Rc, ce
 use chrono::{DateTime, Utc};
 use json::JsonValue;
 
-use crate::{go_move::GoMove, config::{self, Config}};
+use crate::{go_move::GoMove, config::Config};
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Clone)]
 pub enum SgfToken {
@@ -349,17 +349,61 @@ impl GameTree {
             let mut nodes = game_tree.nodes.as_ref().unwrap().borrow_mut().take();
             if res_move == move_count {
                 let sgf_node = SgfNode::from(go_move);
+                let mut skip = false;
+                match game_tree.sub_game_trees.as_ref() {
+                    Some(mut sub_game_trees_ref) => {
+                        let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
+                        for mut sub_game_tree in sub_game_trees.clone() {
+                            match sub_game_tree.nodes.as_ref() {
+                                Some(mut sub_nodes_ref) => {
+                                    let sub_nodes = sub_nodes_ref.borrow_mut().take();
+                                    println!("sub_nodes={:?}", sub_nodes);
+                                    if sub_nodes.len() > 0 && sgf_node.eq(sub_nodes.get(0).unwrap()) {
+                                        sub_game_tree.selected = true;
+                                        skip = true;
+                                    } else {
+                                        sub_game_tree.selected = false;
+                                    }
+                                    sub_nodes_ref.borrow_mut().replace(sub_nodes);
+                                },
+                                None => {},
+                            }
+                        }
+                        sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
+                    },
+                    None => {},
+                }
+                if skip {
+                    println!("do nothing 2!, nodes={:?}", nodes);
+                    game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
+                    return Some(game_tree);
+                }
+
                 nodes.push(sgf_node);
             } else {
                 let origin = nodes.clone();
                 let (old, new) = origin.split_at(res_move as usize + skip_count);
-                // println!("old={:?}, new={:?}", old, new);
-                let mut old_branch = Vec::from(old);
-                let sgf_node = SgfNode::from(go_move);
-                old_branch.push(sgf_node);
-                nodes = old_branch;
-
+                let mut old_branch = Vec::new();
                 let new_branch = Vec::from(new);
+                let sgf_node = SgfNode::from(go_move);
+
+                if new_branch.len() > 0 { 
+                    if sgf_node.eq(new_branch.get(0).unwrap()) {
+                        println!("do nothing 1!");
+                        game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
+                        return Some(game_tree);
+                    }
+                }
+
+                old_branch.push(sgf_node);
+                nodes = Vec::from(old);
+
+                let old_sub_game_tree = GameTree {
+                    is_root: false,
+                    selected: true,
+                    nodes: Some(Rc::new(RefCell::new(old_branch))),
+                    sub_game_trees: None,
+                };
                 let new_sub_game_tree = GameTree {
                     is_root: false,
                     selected: false,
@@ -373,6 +417,7 @@ impl GameTree {
                 for mut sub_game_tree in sub_game_trees.clone() {
                     sub_game_tree.selected = false;
                 }
+                sub_game_trees.push(old_sub_game_tree);
                 sub_game_trees.push(new_sub_game_tree);
                 game_tree.sub_game_trees.as_ref().unwrap().borrow_mut().replace(sub_game_trees);
             }

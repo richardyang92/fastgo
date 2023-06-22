@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GoMove {
     move_id: usize,
     move_pos: (usize, usize, i8),
