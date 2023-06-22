@@ -330,7 +330,7 @@ impl GameTree {
         Some(game_tree)
     }
 
-    fn record_move<'a>(game_tree: &'a mut GameTree, res_move: i32, go_move: GoMove) -> Option<&'a GameTree> {
+    pub fn record_move<'a>(game_tree: &'a mut GameTree, res_move: i32, go_move: GoMove) -> Option<&'a GameTree> {
         if res_move < 0 {
             return None;
         }
@@ -422,7 +422,7 @@ impl GameTree {
         None
     }
 
-    fn _to_json(&self) -> Option<JsonValue> {
+    pub fn to_json(&self) -> Option<JsonValue> {
         let mut root = json::JsonValue::new_object();
         let mut nodes = json::JsonValue::new_array();
         let mut sub_game_trees_json = json::JsonValue::new_array();
@@ -440,7 +440,7 @@ impl GameTree {
             Some(mut sub_game_trees_ref) => {
                 let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
                 for sub_game_tree in sub_game_trees.clone() {
-                    let sub_game_tree_json = sub_game_tree._to_json().expect("parse sub tree failed");
+                    let sub_game_tree_json = sub_game_tree.to_json().expect("parse sub tree failed");
                     sub_game_trees_json.push(sub_game_tree_json).expect("push sub tree failed!");
                 }
                 sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
@@ -630,7 +630,7 @@ mod test {
             let sgf_tokens = sgf_reader.parse();
             let game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len() - 1, true, true);
             let json = match game_tree {
-                Some(game_tree) => Some(game_tree._to_json()),
+                Some(game_tree) => Some(game_tree.to_json()),
                 None => None,
             };
             println!("json={}", json::stringify(json));
@@ -644,7 +644,7 @@ mod test {
             19,
             "a".to_string(),
             "b".to_string());
-        println!("{:?}", json::stringify(game_tree._to_json().unwrap()));
+        println!("{:?}", json::stringify(game_tree.to_json().unwrap()));
     }
 
     #[test]
@@ -653,9 +653,9 @@ mod test {
         if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
             let sgf_tokens = sgf_reader.parse();
             let mut game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len(), true, true).unwrap();
-            println!("before={}", json::stringify(game_tree._to_json()));
+            println!("before={}", json::stringify(game_tree.to_json()));
             GameTree::record_move(&mut game_tree, 5, GoMove::new(9, 3, 10, -1));
-            println!("after={}", json::stringify(game_tree._to_json()));
+            println!("after={}", json::stringify(game_tree.to_json()));
             let _ = game_tree._save_sgf("sgf/test2.sgf");
         }
     }

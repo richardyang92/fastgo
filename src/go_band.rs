@@ -229,16 +229,17 @@ impl<const D: usize> GoBand<D> {
 }
 
 pub trait Play {
-    fn forward(&mut self);
+    fn forward(&mut self) -> Option<GoMove>;
     fn back(&mut self);
 }
 
 impl<const D: usize> Play for GoBand<D> {
-    fn forward(&mut self) {
+    fn forward(&mut self) -> Option<GoMove> {
         let stone_pos = self.stone_pos();
         let mouse_preview = self.mouse_preview();
         let cur_x = stone_pos.0 as usize;
         let cur_y = stone_pos.1 as usize;
+        let mut recorded_move: Option<GoMove> = None;
 
         if stone_pos == mouse_preview
             && self.stone_state(cur_x, cur_y) == 0 {
@@ -356,16 +357,21 @@ impl<const D: usize> Play for GoBand<D> {
                 },
                 None => {},
             }
-            if can_record {
+
+            recorded_move = if can_record {
                 let record_len = self.go_moves.len();
                 let move_id = record_len;
                 let mut go_move = GoMove::new(move_id, cur_x, cur_y, cur_state);
-                go_move.set_eaten_stones(eaten_stones_vec);
+                go_move.set_eaten_stones(eaten_stones_vec.clone());
                 self.go_moves.push(go_move);
                 println!("{}: {:?}", move_id, self.go_moves.last());
-            }
+                Some(GoMove::new_with_eaten_stones(move_id, cur_x, cur_y, cur_state, eaten_stones_vec.clone()))
+            } else {
+                None
+            };
             self.clear();
         }
+        recorded_move
     }
 
     fn back(&mut self) {

@@ -54,7 +54,8 @@ struct GoBandView<const D: usize> {
     window_height: u32,
     scale_factor: f32,
     go_band: GoBand<D>,
-    _game_tree: GameTree,
+    game_tree: GameTree,
+    move_count: i32,
 }
 
 impl<const D: usize> GoBandView<D> {
@@ -77,7 +78,7 @@ impl<const D: usize> Application for GoBandView<D> {
         let go_sz = config.go_sz();
         let sgf_path = config.sgf_path();
 
-        let _game_tree = if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
+        let game_tree = if let Ok(sgf_reader) = SgfReader::read_from(sgf_path) {
             let sgf_tokens = sgf_reader.parse();
             let game_tree = GameTree::from_sgf_tokens(&sgf_tokens, 0, sgf_tokens.len() - 1, true, true);
             match game_tree {
@@ -99,7 +100,8 @@ impl<const D: usize> Application for GoBandView<D> {
                     0,
                     go_sz as usize,
                 ),
-                _game_tree,
+                game_tree,
+                move_count: 0,
             },
             Command::none(),
         )
@@ -135,10 +137,25 @@ impl<const D: usize> Application for GoBandView<D> {
                             iced::mouse::Event::ButtonPressed(button) => {
                                 match button {
                                     Button::Left => {
-                                        self.go_band.forward();
+                                        let recorded_move = self.go_band.forward();
+                                        match recorded_move {
+                                            Some(go_move) => {
+                                                self.move_count += 1;
+                                                let move_id = go_move.move_id();
+                                                let res_move = if self.move_count == move_id as i32 + 1 {
+                                                    move_id as i32
+                                                } else {
+                                                    move_id as i32 - 1
+                                                };
+                                                GameTree::record_move(&mut self.game_tree, res_move, go_move);
+                                                println!("game_tree={}", json::stringify(self.game_tree.to_json()))
+                                            },
+                                            None => {},
+                                        }
                                     },
                                     Button::Right => {
                                         self.go_band.back();
+                                        self.move_count -= 1;
                                     }
                                     _ => {},
                                 }
