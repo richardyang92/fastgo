@@ -18,6 +18,7 @@ pub struct GoBand<const D: usize> {
     stone_state: [[i8; D]; D],
     stone_block: Vec<(i32, i32, i8)>,
     stone_pos: (i32, i32),
+    next_stone_pos: Vec<(i32, i32, i8, bool)>,
     mouse_preview: (i32, i32),
     cur_player: Player,
     band_cache: Cache,
@@ -39,6 +40,7 @@ impl<const D: usize> GoBand<D> {
             dim,
             stone_state: [[0; D]; D],
             stone_block: vec![],
+            next_stone_pos: vec![],
             mouse_preview: (D as i32 / 2, D as i32 / 2),
             stone_pos: (D as i32 / 2, D as i32 / 2),
             cur_player: Player::BLACK,
@@ -90,8 +92,16 @@ impl<const D: usize> GoBand<D> {
         self.mouse_preview = (x_grid, y_grid);
     }
 
+    pub fn set_stone_pos(&mut self, x: i32, y: i32) {
+        self.stone_pos = (x, y)
+    }
+
     pub fn stone_pos(&self) -> (i32, i32) {
         self.stone_pos
+    }
+
+    pub fn set_next_stone_pos(&mut self, next_stone_pos: Vec<(i32, i32, i8, bool)>) {
+        self.next_stone_pos = next_stone_pos;
     }
 
     pub fn mouse_preview(&self) -> (i32, i32) {
@@ -229,19 +239,19 @@ impl<const D: usize> GoBand<D> {
 }
 
 pub trait Play {
-    fn forward(&mut self) -> Option<GoMove>;
+    fn forward(&mut self, from_sgf: bool) -> Option<GoMove>;
     fn back(&mut self);
 }
 
 impl<const D: usize> Play for GoBand<D> {
-    fn forward(&mut self) -> Option<GoMove> {
+    fn forward(&mut self, from_sgf: bool) -> Option<GoMove> {
         let stone_pos = self.stone_pos();
         let mouse_preview = self.mouse_preview();
         let cur_x = stone_pos.0 as usize;
         let cur_y = stone_pos.1 as usize;
         let mut recorded_move: Option<GoMove> = None;
 
-        if stone_pos == mouse_preview
+        if (stone_pos == mouse_preview || from_sgf)
             && self.stone_state(cur_x, cur_y) == 0 {
             let mut can_record = true;
             let mut eaten_stones_vec: Vec<(usize, usize, i8)> = vec![];
@@ -489,6 +499,20 @@ impl<Message, const D: usize> canvas::Program<Message, Renderer> for GoBand<D> {
                             }
                         }
                     }
+                }
+            }
+
+            for (x, y, state, selected) in self.next_stone_pos.clone() {
+                if state == 1 {
+                    let cur_pos = Path::circle(Point::new(top_left.x + x as f32 * grid_size, top_left.y + y as f32 * grid_size), grid_size / 4.0);
+                    let color = if selected { Color::BLACK } else { Color::from_rgba8(0, 0, 0, 0.85) };
+                    frame.fill(&cur_pos, color);
+                } else if state == -1 {
+                    let cur_pos = Path::circle(Point::new(top_left.x + x as f32 * grid_size, top_left.y + y as f32 * grid_size), grid_size / 4.0);
+                    let color = if selected { Color::WHITE } else { Color::from_rgba8(255, 255, 255, 0.85) };
+                    frame.fill(&cur_pos, color);
+                } else {
+                    // ignore
                 }
             }
         });

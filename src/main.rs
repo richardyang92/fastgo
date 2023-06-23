@@ -2,6 +2,7 @@ use config::Config;
 use game_tree::{GameTree, SgfReader, ReadFile};
 use go_band::{GoBand, Play};
 
+use iced::keyboard::KeyCode;
 use iced::mouse::Button;
 use iced::{executor, Settings, Event, window, subscription, theme, application};
 use iced::widget::{canvas, container, row, text};
@@ -137,17 +138,17 @@ impl<const D: usize> Application for GoBandView<D> {
                             iced::mouse::Event::ButtonPressed(button) => {
                                 match button {
                                     Button::Left => {
-                                        let recorded_move = self.go_band.forward();
+                                        let recorded_move = self.go_band.forward(false);
                                         match recorded_move {
                                             Some(go_move) => {
                                                 self.move_count += 1;
                                                 let move_id = go_move.move_id();
-                                                let res_move = if self.move_count == move_id as i32 + 1 {
+                                                let res_move_id = if self.move_count == move_id as i32 + 1 {
                                                     move_id as i32
                                                 } else {
                                                     move_id as i32 - 1
                                                 };
-                                                GameTree::record_move(&mut self.game_tree, res_move, go_move);
+                                                GameTree::record_move(&mut self.game_tree, res_move_id, go_move);
                                                 println!("game_tree={}", json::stringify(self.game_tree.to_json()))
                                             },
                                             None => {},
@@ -159,7 +160,7 @@ impl<const D: usize> Application for GoBandView<D> {
                                     }
                                     _ => {},
                                 }
-                            }
+                            },
                             _ => {}
                         };
                     } else {
@@ -168,6 +169,45 @@ impl<const D: usize> Application for GoBandView<D> {
                             self.go_band.set_window_height(height);
                             self.window_width = width;
                             self.window_height = height;
+                        } else {
+                            if let Event::Keyboard(iced::keyboard::Event::KeyPressed { key_code, .. }) = event {
+                                match key_code {
+                                    KeyCode::Up | KeyCode::Down => {
+                                        if key_code == KeyCode::Up {
+                                            self.move_count -= 1; 
+                                        } else {
+                                            self.move_count += 1;
+                                        }
+                                        let sgf_moves = GameTree::get_moves(&self.game_tree, self.move_count - 1);
+                                        println!("sgf move {}={:?}", self.move_count, sgf_moves);
+                                        match sgf_moves {
+                                            Some(moves) => {
+                                                let next_stone_poses = moves.into_iter().map(|go_move| {
+                                                        let (x, y, state) = go_move.0.move_pos();
+                                                        (x as i32, y as i32, state, go_move.1)
+                                                    }).collect::<Vec<_>>();
+                                                let mut potential_stone_poses = vec![];
+                                                for next_stone_pos in next_stone_poses {
+                                                    if next_stone_pos.3 {
+                                                        self.go_band.set_stone_pos(next_stone_pos.0, next_stone_pos.1);
+                                                        if key_code == KeyCode::Down {
+                                                            self.go_band.forward(true);
+                                                        } else {
+                                                            self.go_band.back();
+                                                        }
+                                                    } else {
+                                                        potential_stone_poses.push(next_stone_pos);
+                                                    }
+                                                }
+                                                self.go_band.set_next_stone_pos(potential_stone_poses);
+                                                self.clear_band_view();
+                                            },
+                                            None => {},
+                                        }
+                                    },
+                                    _ => {},
+                                }
+                            }
                         }
                     }
                     Command::none()

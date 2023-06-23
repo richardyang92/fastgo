@@ -1,4 +1,4 @@
-use std::{vec, fs::{File, OpenOptions}, io::{BufReader, Read, Write}, rc::Rc, cell::RefCell, collections::LinkedList, borrow::BorrowMut, cmp::Ordering};
+use std::{vec, fs::{File, OpenOptions}, io::{BufReader, Read, Write}, rc::Rc, cell::RefCell, collections::{LinkedList, HashMap}, borrow::BorrowMut, cmp::Ordering};
 
 use chrono::{DateTime, Utc};
 use json::JsonValue;
@@ -330,8 +330,91 @@ impl GameTree {
         Some(game_tree)
     }
 
-    pub fn record_move<'a>(game_tree: &'a mut GameTree, res_move: i32, go_move: GoMove) -> Option<&'a GameTree> {
-        if res_move < 0 {
+    pub fn get_moves(game_tree: &GameTree, move_id: i32) -> Option<Vec<(GoMove, bool)>> {
+        if move_id < 0 {
+            return None;
+        }
+        let nodes = game_tree.nodes.as_ref().unwrap().borrow_mut().take();
+        let mut move_count = 0;
+        let mut skip_count = 0;
+        let mut node_map: HashMap<i32, SgfNode> = HashMap::new();
+        for node in nodes.clone() {
+            match node.node_key {
+                SgfKey::W | SgfKey::B => {
+                    node_map.insert(move_count, node.clone());
+                    move_count += 1;
+                },
+                _ => skip_count += 1,
+            }
+        }
+        println!("move_count={}, skip_count={}", move_count, skip_count);
+        game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes.clone());
+        if move_id <= move_count {
+            if move_id < move_count {
+                let sgf_node = node_map.get(&move_id).unwrap();
+                let poses = sgf_node.node_val.chars().map(|c| SgfNode::convert_mark_to_pos(c)).collect::<Vec<_>>();
+                let cur_state = match sgf_node.node_key {
+                    SgfKey::B => 1,
+                    SgfKey::W => -1,
+                    _ => 0,
+                };
+                return Some(vec![(GoMove::new(move_id as usize, poses[0], poses[1], cur_state), true)]);
+            } else {
+                let mut go_moves: Vec<(GoMove, bool)> = vec![];
+                match game_tree.sub_game_trees.as_ref() {
+                    Some(mut sub_game_trees_ref) => {
+                        let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
+                        for sub_game_tree in sub_game_trees.clone() {
+                            match sub_game_tree.nodes.as_ref() {
+                                Some(mut sub_nodes_ref) => {
+                                    let sub_nodes = sub_nodes_ref.borrow_mut().take();
+                                    // println!("sub_nodes={:?}", sub_nodes);
+                                    if sub_nodes.len() > 0 {
+                                        let sgf_node = sub_nodes.get((0) as usize).unwrap();
+                                        let poses = sgf_node.node_val.chars().map(|c| SgfNode::convert_mark_to_pos(c)).collect::<Vec<_>>();
+                                        let cur_state = match sgf_node.node_key {
+                                            SgfKey::B => 1,
+                                            SgfKey::W => -1,
+                                            _ => 0,
+                                        };
+                                        go_moves.push((GoMove::new(move_id as usize, poses[0], poses[1], cur_state), sub_game_tree.selected));
+                                    }
+                                    sub_nodes_ref.borrow_mut().replace(sub_nodes);
+                                },
+                                None => {},
+                            }
+                        }
+                        sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
+                        return Some(go_moves);
+                    },
+                    None => {},
+                }
+            }
+        } else {
+            match game_tree.sub_game_trees.as_ref() {
+                Some(mut sub_game_trees_ref) => {
+                    let sub_game_trees = sub_game_trees_ref.borrow_mut().take();
+                    let mut i = 0;
+                    for sub_game_tree in sub_game_trees.clone() {
+                        if !sub_game_tree.selected {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let sub_game_tree = sub_game_trees[i].clone();
+                    let next_moves = GameTree::get_moves(&sub_game_tree, move_id - move_count);
+                    sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
+                    return next_moves;
+                },
+                None => {},
+            }
+        }
+        None
+    }
+
+    pub fn record_move<'a>(game_tree: &'a mut GameTree, move_id: i32, go_move: GoMove) -> Option<&'a GameTree> {
+        if move_id < 0 {
             return None;
         }
         let nodes = game_tree.nodes.as_ref().unwrap().borrow_mut().take();
@@ -344,10 +427,10 @@ impl GameTree {
             }
         }
         game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
-        if res_move <= move_count {
+        if move_id <= move_count{
             // println!("find brach {:?}", game_tree);
             let mut nodes = game_tree.nodes.as_ref().unwrap().borrow_mut().take();
-            if res_move == move_count {
+            if move_id == move_count {
                 let sgf_node = SgfNode::from(go_move);
                 let mut skip = false;
                 match game_tree.sub_game_trees.as_ref() {
@@ -357,7 +440,7 @@ impl GameTree {
                             match sub_game_tree.nodes.as_ref() {
                                 Some(mut sub_nodes_ref) => {
                                     let sub_nodes = sub_nodes_ref.borrow_mut().take();
-                                    println!("sub_nodes={:?}", sub_nodes);
+                                    // println!("sub_nodes={:?}", sub_nodes);
                                     if sub_nodes.len() > 0 && sgf_node.eq(sub_nodes.get(0).unwrap()) {
                                         sub_game_tree.selected = true;
                                         skip = true;
@@ -374,7 +457,7 @@ impl GameTree {
                     None => {},
                 }
                 if skip {
-                    println!("do nothing 2!, nodes={:?}", nodes);
+                    // println!("do nothing 2!, nodes={:?}", nodes);
                     game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
                     return Some(game_tree);
                 }
@@ -382,14 +465,14 @@ impl GameTree {
                 nodes.push(sgf_node);
             } else {
                 let origin = nodes.clone();
-                let (old, new) = origin.split_at(res_move as usize + skip_count);
+                let (old, new) = origin.split_at((move_id + skip_count) as usize);
                 let mut old_branch = Vec::new();
                 let new_branch = Vec::from(new);
                 let sgf_node = SgfNode::from(go_move);
 
                 if new_branch.len() > 0 { 
                     if sgf_node.eq(new_branch.get(0).unwrap()) {
-                        println!("do nothing 1!");
+                        // println!("do nothing 1!");
                         game_tree.nodes.as_ref().unwrap().borrow_mut().replace(nodes);
                         return Some(game_tree);
                     }
@@ -437,7 +520,7 @@ impl GameTree {
                         }
                     }
                     let mut sub_game_tree = sub_game_trees[i].clone();
-                    GameTree::record_move(&mut sub_game_tree, res_move - move_count, go_move);
+                    GameTree::record_move(&mut sub_game_tree, move_id - move_count, go_move);
                     // println!("sub: {:?}", sub_game_trees);
                     sub_game_trees[i] = sub_game_tree;
                     sub_game_trees_ref.borrow_mut().replace(sub_game_trees);
@@ -576,14 +659,14 @@ impl From<GoMove> for SgfNode {
         } else if player == -1 {
             sgf_node.node_key = SgfKey::W;
         }
-        sgf_node.node_val = format!("{}{}", SgfNode::convert_pos(x), SgfNode::convert_pos(y));
+        sgf_node.node_val = format!("{}{}", SgfNode::convert_pos_to_mark(x), SgfNode::convert_pos_to_mark(y));
         // println!("{:?}", sgf_node);
         sgf_node
     }
 }
 
 impl SgfNode {
-    fn convert_pos(pos: usize) -> char {
+    fn convert_pos_to_mark(pos: usize) -> char {
         match pos {
             0 => 'a',
             1 => 'b',
@@ -605,6 +688,31 @@ impl SgfNode {
             17 => 'r',
             18 => 's',
             _ => ' ',
+        }
+    }
+
+    fn convert_mark_to_pos(mark: char) -> usize {
+        match mark {
+            'a' => 0,
+            'b' => 1,
+            'c' => 2,
+            'd' => 3,
+            'e' => 4,
+            'f' => 5,
+            'g' => 6,
+            'h' => 7,
+            'i' => 8,
+            'j' => 9,
+            'k' => 10,
+            'l' => 11,
+            'm' => 12,
+            'n' => 13,
+            'o' => 14,
+            'p' => 15,
+            'q' => 16,
+            'r' => 17,
+            's' => 18,
+            _ => 0,
         }
     }
 }
